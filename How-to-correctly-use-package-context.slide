@@ -1,0 +1,223 @@
+How to correctly use package context
+Advice for cancelation
+9 Aug 2017
+
+Jack Lindamood
+Software Engineer, Twitch
+cep221@gmail.com
+
+* About the author
+- Writing Go for 4 years
+
+* Problem
+- Every request should have a timeout
+- Need to propagate that timeout across the request
+- Let's say it's 3 seconds at the start of the request
+- How much time is left in the middle of the request?
+- Need to store that information somewhere so the middle of the request can stop
+
+* Problem expanded
+- What if one request requires multiple RPC calls to resolve
+- If one of those RPC calls fails, it may be worth failing the whole request
+- (Insert picture of one request processed across multiple services)
+- (Note: errgroup package mentioned, explained later)
+
+* Solution
+- Use object to signal when a request is over
+- Includes hints on when the request is expected to end
+- Object uses channels to report when the request is done
+
+* Let's throw variables in there too
+- No concept of thread/goroutine specific variables in Go
+- Reasonable, since it becomes tricky when goroutines depend upon other goroutines
+- Since context is threaded everywhere, throw variables on it to as a grab bag of information
+- Very easy to abuse
+
+* When should you use context.Context?
+- Every function or RPC call should have an ability to time out
+- This is just reasonable API design
+- What _timeout_ means is ambiguous, since you also need to be able to end an RPC call early if the result is no longer needed.
+- context.Context is the obvious solution
+- Any function that can block or take a long time to finish should have a context.Context
+
+* How to create a context
+- Use context.Background() at the beginning of an RPC request
+- If you don't have a context, and need to call a context function, use context.TODO()
+
+* How to integrate context.Context
+- As the first variable of a function call
+
+    func (d* Dialer) DialContext(ctx context.Context, network, address string) (Conn, error)
+
+- As an optional value on a struct
+
+    func (r *Request) WithContext(ctx context.Context) *Request
+
+- The variable name should probably be ctx
+
+* Where to put a context
+- Think of a context flowing thru your program, like water in a river
+- Ideally, context exists only on the call stack
+- Do not store the context in a struct
+- Only exception is when the struct is a *request* struct (http.Request)
+- Request structs should end with a request
+- context.Context variables should be unreferenced when the RPC call is finished
+
+* context.Value, the API duct tape
+- Allows attaching values to a context and getting them back later
+
+* Storing values in context.Value
+( Note: This is 3 slides, each exposing a note)
+
+    // <--- Use private type to not confuse your namespace
+    var privateCtxType int
+    var thingGetter privateCtxType
+    // <--- Use a getter function because people don't have access to your private
+    //      type.
+    func GetThing(ctx context.Context) int {
+      // <---- Cast the value for them
+      return ctx.Value(thingGetter).(int)
+    }
+    // <--- Use a store function because people don't have access to your private
+    //      type
+    func StoreThing(ctx context.Context, thing int) context.Context {
+      return ctx.WithValue(thing)
+    }
+
+* context.Context should be immutable
+- context is implemented as a DAG (directed acyclic graph) of contexts that point to their parent
+- Do not store a value that, if changed, the change is seen by other contexts
+
+* What to put in context.Value
+- Everything about a context should be request scoped
+- Includes context.Value
+- What is a request scoped value?
+- Derived from request data and goes away when the request is over
+
+* What things are clearly not request scoped
+- Objects made outside the request and not changed with the request
+- Database connection
+- But what if you put the user ID on the connection?
+- Global logger
+- But what if you put the user ID on the logger?
+
+* What things are probably request scoped
+- Who, what, how, where, when of the request itself
+
+* What the problem with context.Value?
+- Unfortunately, almost everything is derived from the request
+- Why bother having function parameters.
+- Just accept a context?
+- Think about it: what isn't derived from the request?
+
+* Why I dislike context.Value
+- Function parameters clearly tell you what a function needs
+
+    func IsAdminUser(ctx context.Context) bool {
+      userID := GetUserID(ctx)
+      return authSingleton.IsAdmin(userID) 
+    }
+
+* What if we changed the function signature?
+
+    func IsAdminUser(ctx context.Context, userID string, authenticator auth.Service)
+
+- What does this function signature tell us?
+- This function can timeout
+- This function takes a user ID
+- This function uses an authenticator on the userID
+- What do I need to change to test this function?
+- stub out authenticator
+- modify the userID
+- All of this from the signature
+
+* Which function is easier to refactor?
+- If it takes just a context, I need to make sure the userID is there wherever I use it
+- If it takes what it needs, then I know what to modify
+
+* So what is ok to put in context.Value?
+- context.Value should inform, not control
+- Should never be required input for documented results
+- If your function can't behave correctly because of what context.Value has,
+- You're obscuring your API too heavily
+
+* What things usually don't control
+- Request ID
+- Often given to each RPC request.
+- The logic of the request is almost never gated on what the ID is
+- Logging
+- The logger itself is not request scoped, so should not sit on the context
+- Logging decoration can be request scoped, so can sit on the context
+- Request ID
+- User ID (if used only for logging)
+- Incoming request ID
+- The non request scoped logger, can use the context to decorate logs
+
+* Things that clearly control
+- Database connection
+- Controls logic very heavily
+- Explicitly call it out as a parameter
+- Authentication
+- Obviously controls logic
+- Very important to how a function works
+- Call it out explicitly
+
+* Reasons people abuse context.Value
+- Middleware abstractions
+- Deep callstacks
+- Spaghetti designs
+- context.Value doesn't make your API cleaner, it makes it more obscured
+
+* Summary of context.Value
+- Great for debugging information
+- Required parameters obscure your API
+- Just try not to use it
+
+* Advanced usage: golang.org/x/sync/errgroup
+- Normal use of context is to
+- Make multiple RPC requests at once
+- If any of them error out,
+- Stop all the requests
+- return back the original error
+- errgroup package is great for that pattern
+
+* Following is 3 slides, pointing out each comment
+
+    type Post struct {
+      ID int
+      AuthorID string
+      CommentCount int
+    }
+    func populatePost(ctx context.Context, post *Post) error {
+      # eg is the error group that runs each RPC call
+      # egCtx is the new context I will use
+      eg, egCtx := errgroup.WithContext(ctx)
+      eg.Go(func() error {
+        # Note: I am now using egCtx (error group context)
+        # instead of the original context
+        author, err := users.GetAuthor(egCtx, post.ID)
+        if err != nil {
+          # if this returns err, egCtx will Cancel() itself
+          return err
+        }
+        post.AuthorID = author
+        return nil
+      }
+      eg.Go(func() error {
+        # If egCtx canceled itself (from above), we will end
+        # this RPC call early
+        count, err := comments.GetCommentCount(egCtx, post.ID)
+        if err != nil {
+          return err
+        }
+        post.CommentCount = count
+        return nil
+      }
+      # If any of the above returns an error, this will return the
+      # first seen error
+      if err := eg.Wait(); err != nil {
+        return err
+      }
+      return nil
+    }
+
