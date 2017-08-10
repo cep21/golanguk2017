@@ -6,11 +6,13 @@ Jack Lindamood
 Software Engineer, Twitch
 cep221@gmail.com
 
+: https://www.calhoun.io/pitfalls-of-context-values-and-how-to-avoid-or-mitigate-them/
+: https://faiface.github.io/post/context-should-go-away-go2/
+
 * About the author
 - Writing Go for 4 years
 - Currently software engineer at Twitch
-- Large, multi repository Go codebase
-- Go powers almost all backend services
+- (Insert public Go@Twitch information)
 
 * Problem that created context.Context
 - Every long request should have a timeout
@@ -43,10 +45,16 @@ cep221@gmail.com
 - (Insert picture of the context DAG)
 
 * context.Context API
+
+- 3 functions on when to end your sub-request
+- 1 function on request scoped variables
+
     type Context interface {
+
         Deadline() (deadline time.Time, ok bool)
         Done() <-chan struct{}
         Err() error
+
         Value(key interface{}) interface{}
     }
 
@@ -90,7 +98,7 @@ cep221@gmail.com
 
     func (d* Dialer) DialContext(ctx context.Context, network, address string) (Conn, error)
 
-- As an optional value on a struct
+- As an optional value on a request struct
 
     func (r *Request) WithContext(ctx context.Context) *Request
 
@@ -137,15 +145,18 @@ cep221@gmail.com
 
   func (g *Group) Go(f func() error) {
     g.wg.Add(1)
+
     go func() {                      // <---- Execute a function in parallel
       defer g.wg.Done()
       if err := f(); err != nil {    // <---- If that function fails
+
         g.errOnce.Do(func() {
           g.err = err
           if g.cancel != nil {
             g.cancel()               // <---- cancel the context, which should end
           }                          //       early other parallel functions
         })
+
       }
     }()
   }
@@ -171,6 +182,29 @@ cep221@gmail.com
     return g.err              // <------ Return the first error Group.Go saw
    } 
 
+* Example usage (errgroup)
+
+  func DoTwoRequestsAtOnce(ctx context.Context) error {
+    eg, egCtx := errgroup.WithContext(ctx)
+    var resp1, resp2 *http.Response
+
+    f := func(loc string, respIn **http.Response) func() error {
+      return func() error {
+        reqCtx, cancel := context.WithTimeout(egCtx, time.Second)
+        defer cancel()
+        req, _ := http.NewRequest("GET", loc, nil) // TODO: Check this error
+        var err error
+        *resp, err = http.DefaultClient.Do(req.WithContext(reqCtx))
+        if err == nil && (*respIn).StatusCode > 500 return errors.New("unexpected!")
+        return err
+      }
+    }
+
+    eg.Go(f("http://localhost:8080/fast_request", &resp1))    // <--- Run two requests
+    eg.Go(f("http://localhost:8080/slow_request", &resp2))
+
+    return eg.Wait() // TODO: Actually do something with resp1 and resp2
+  }
 
 * context.Value, the API duct tape
 - Allows attaching values to a context and getting them back later
