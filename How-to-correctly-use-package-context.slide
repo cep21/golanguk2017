@@ -1,5 +1,5 @@
 How to correctly use package context
-Advice for cancelation
+Advice and pitfalls
 9 Aug 2017
 
 Jack Lindamood
@@ -12,7 +12,15 @@ cep221@gmail.com
 * About the author
 - Writing Go for 4 years
 - Currently software engineer at Twitch
-- (Insert public Go@Twitch information)
+- Most backend at Twitch powered by Go
+- Hundred(s) of repositories
+
+* Sections
+- Why context exists
+- Request cancelation
+- Request scoped values
+
+* Why context exists
 
 * Problem that created context.Context
 - Every long request should have a timeout
@@ -24,7 +32,32 @@ cep221@gmail.com
 * Problem expanded
 - What if one request requires multiple RPC calls to resolve
 - If one of those RPC calls fails, it may be worth failing the whole request
-- (Insert picture of one request processed across multiple services)
+
+.image images/normal_request.png
+
+* Good request
+
+.image images/good_request.png
+
+- Everything works, finishes in 40ms
+
+* Failed request
+
+.image images/bad_request.png
+
+- RPC2 failed, still took 40ms
+
+* Failed request end early
+
+.image images/bad_request_dangle.png
+
+- If RPC2 failed, just end early.  Dangling RPC3
+
+* Failed request ideal
+
+.image images/bad_request_ideal.png
+
+- If RPC2 fails, tell RPC 3 and 4 to end early
 
 * Solution
 - Use object to signal when a request is over
@@ -38,11 +71,20 @@ cep221@gmail.com
 - Very easy to abuse
 
 * context.Context implementation details
-- DAG of immutable context nodes
+- Tree of immutable context nodes
 - Cancelation of a node cancels all sub nodes
 - Context values are a node
-- Value lookup goes backwards up the DAG
-- (Insert picture of the context DAG)
+- Value lookup goes backwards up the tree
+
+.image images/context_tree.png
+
+* Context tree at 3 sec
+
+.image images/context_tree_3s.png
+
+* Context tree at 5 sec
+
+.image images/context_tree_5s.png
 
 * context.Context API
 
@@ -58,29 +100,6 @@ cep221@gmail.com
         Value(key interface{}) interface{}
     }
 
-* Example impl (context.WithValue)
-
-- Embedded Context allows it to implement the other context functions
-- Only override value, delegate to sub context if values don't match
-
-    func WithValue(parent Context, key, val interface{}) Context {
-        // .. some key/val validation redacted
-        return &valueCtx{parent, key, val}
-    }
-
-    type valueCtx struct {
-        Context
-        key, val interface{}
-    }
-
-    func (c *valueCtx) Value(key interface{}) interface{} {
-        if c.key == key {
-            return c.val
-        }
-        return c.Context.Value(key)
-    }
-
-
 * When should you use context.Context?
 - Every function or RPC call should have an ability to time out
 - This is just reasonable API design
@@ -92,6 +111,8 @@ cep221@gmail.com
 - Use context.Background() at the beginning of an RPC request
 - If you don't have a context, and need to call a context function, use context.TODO()
 - Give sub requests their own sub context if they need other timeouts
+
+.image images/context_tree.png
 
 * How to integrate context.Context
 - As the first variable of a function call
@@ -113,7 +134,8 @@ cep221@gmail.com
 - context.Context variables should be unreferenced when the RPC call is finished
 - Context dies when the request dies
 
-* Context pacakge caveats
+
+* Context package caveats
 - Create pattern of closing contexts
 - Especially timeout contexts
 
@@ -123,147 +145,68 @@ cep221@gmail.com
     defer cancel()
     // Good pattern to defer cancel() after creation
 
-* When to cancel early a context
+* Request cancelation
+
+* When to cancle a context early
 - When you don't care about spawned logic
 - golang.org/x/sync/errgroup as example
+- errgroup uses context to great an RPC cancelation abstraction
+- Great deep dive into ideal context usage
 
 * Example usage (golang.org/x/sync/errgroup)
 
-  // Create a group and a context to use with that group
-  func WithContext(ctx context.Context) (*Group, context.Context) {
-    ctx, cancel := context.WithCancel(ctx)   // <---- create a cancel context
-    return &Group{cancel: cancel}, ctx
-  }
+.code code/makeeg.go
+
+- Return a context that *Group* can cancel early
 
 * Example usage (golang.org/x/sync/errgroup)
 
-  // Create a group and a context to use with that group
-  func WithContext(ctx context.Context) (*Group, context.Context) {
-    ctx, cancel := context.WithCancel(ctx)     // <---- create a cancel context
-    return &Group{cancel: cancel}, ctx
-  }
+.code code/doeg1.go
 
-  func (g *Group) Go(f func() error) {
-    g.wg.Add(1)
-
-    go func() {                      // <---- Execute a function in parallel
-      defer g.wg.Done()
-      if err := f(); err != nil {    // <---- If that function fails
-
-        g.errOnce.Do(func() {
-          g.err = err
-          if g.cancel != nil {
-            g.cancel()               // <---- cancel the context, which should end
-          }                          //       early other parallel functions
-        })
-
-      }
-    }()
-  }
-
+- Execute a function in parallel
 
 * Example usage (golang.org/x/sync/errgroup)
 
-  // Create a group and a context to use with that group
-  func WithContext(ctx context.Context) (*Group, context.Context) {
-    ctx, cancel := context.WithCancel(ctx)     // <---- create a cancel context
-    return &Group{cancel: cancel}, ctx
-  }
+.code code/doeg2.go
 
-  func (g *Group) Go(f func() error) {
-    // ....
-  }
+- If that function fails
 
-  func (g *Group) Wait() error {
-    g.wg.Wait()               // <------ Wait for all added functions to finish
-    if g.cancel != nil {
-      g.cancel()              // <------ Clean up the cancelable context
-    }
-    return g.err              // <------ Return the first error Group.Go saw
-   } 
+* Example usage (golang.org/x/sync/errgroup)
+
+.code code/doeg3.go
+
+- Cancel the returned context sync.Once
+
+* Example usage (golang.org/x/sync/errgroup)
+
+.code code/doegwait.go
+
+- Notice cleanup cancel() after Wait
 
 * Example usage (errgroup)
 
-  func DoTwoRequestsAtOnce(ctx context.Context) error {
-    eg, egCtx := errgroup.WithContext(ctx)
-    var resp1, resp2 *http.Response
+.code code/egexample.go
 
-    f := func(loc string, respIn **http.Response) func() error {
-      return func() error {
-        reqCtx, cancel := context.WithTimeout(egCtx, time.Second)
-        defer cancel()
-        req, _ := http.NewRequest("GET", loc, nil) // TODO: Check this error
-        var err error
-        *resp, err = http.DefaultClient.Do(req.WithContext(reqCtx))
-        if err == nil && (*respIn).StatusCode > 500 return errors.New("unexpected!")
-        return err
-      }
-    }
+: A lot going on here
 
-    eg.Go(f("http://localhost:8080/fast_request", &resp1))    // <--- Run two requests
-    eg.Go(f("http://localhost:8080/slow_request", &resp2))
-
-    return eg.Wait() // TODO: Actually do something with resp1 and resp2
-  }
+* Request scoped values
 
 * context.Value, the API duct tape
 - Allows attaching values to a context and getting them back later
 
-* Storing values in context.Value
+.code code/ctxvalue.go
 
-    var privateCtxType int
-    var thingGetter privateCtxType
+* Scope your keyspace
 
-    func GetThing(ctx context.Context) int {
-      return ctx.Value(thingGetter).(int)
-    }
+- Private type
+- Instance of private type
+- Get/Set that uses private instance
 
-    func StoreThing(ctx context.Context, thing int) context.Context {
-      return ctx.WithValue(thing)
-    }
+.code code/ctxstore1.go
 
-* Storing values in context.Value (private data types)
-
-    var privateCtxType int            // <------- Private type
-    var thingGetter privateCtxType    // <------- private variable of private type
-
-    func GetThing(ctx context.Context) int {
-      return ctx.Value(thingGetter).(int)
-    }
-
-    func StoreThing(ctx context.Context, thing int) context.Context {
-      return ctx.WithValue(thing)
-    }
-
-
-* Storing values in context.Value (Getter function)
-
-    var privateCtxType int
-    var thingGetter privateCtxType
-
-    func GetThing(ctx context.Context) int {  // <------ getter function
-      return ctx.Value(thingGetter).(int)     // <------ cast the value for them
-    }
-
-    func StoreThing(ctx context.Context, thing int) context.Context {
-      return ctx.WithValue(thing)
-    }
-
-* Storing values in context.Value (Setter function)
-
-    var privateCtxType int
-    var thingGetter privateCtxType
-
-    func GetThing(ctx context.Context) int {
-      return ctx.Value(thingGetter).(int)
-    }
-
-    func StoreThing(ctx context.Context, thing int) context.Context {
-      return ctx.WithValue(thing) // <---- setter function.  Return a new context
-    }
-
-* context.Context should be immutable
-- context is implemented as a DAG (directed acyclic graph) of contexts that point to their parent
+* Context.Value should be immutable
+- context.Context is designed immutable
+- Keep this with context.Value
 - Do not store a value that, if changed, the change is seen by other contexts
 - Remember this when you use context.Value
 
