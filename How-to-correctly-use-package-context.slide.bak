@@ -17,7 +17,7 @@ cep221@gmail.com
 
 * Sections
 - Why context exists
-- Request cancellation
+- Request cancelation
 - Request scoped values
 
 * Why context exists
@@ -72,7 +72,7 @@ cep221@gmail.com
 
 * context.Context implementation details
 - Tree of immutable context nodes
-- Cancellation of a node cancels all sub nodes
+- Cancelation of a node cancels all sub nodes
 - Context values are a node
 - Value lookup goes backwards up the tree
 
@@ -149,12 +149,12 @@ cep221@gmail.com
     defer cancel()
     // Good pattern to defer cancel() after creation
 
-* Request cancellation
+* Request cancelation
 
-* When to cancel a context early
+* When to cancle a context early
 - When you don't care about spawned logic
 - golang.org/x/sync/errgroup as example
-- errgroup uses context to create an RPC cancellation abstraction
+- errgroup uses context to create an RPC cancelation abstraction
 - Great deep dive into ideal context usage
 
 * Example usage (golang.org/x/sync/errgroup)
