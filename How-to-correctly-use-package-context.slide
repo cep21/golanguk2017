@@ -208,6 +208,8 @@ cep221@gmail.com
 
 .code code/ctxstore1.go
 
+: Be wary of vendor directory issues
+
 * Context.Value should be immutable
 - context.Context is designed immutable
 - Keep this with context.Value
@@ -276,7 +278,6 @@ cep221@gmail.com
 - Logging
 - The logger itself is not request scoped, so should not sit on the context
 - Logging decoration can be request scoped, so can sit on the context
-- Request ID
 - User ID (if used only for logging)
 - Incoming request ID
 - The non request scoped logger, can use the context to decorate logs

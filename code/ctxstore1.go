@@ -1,12 +1,16 @@
-package mytype
+package reqinfo
 
-var privateCtxType int
-var thingGetter privateCtxType
+type privateCtxType string
 
-func GetThing(ctx context.Context) int {
-	return ctx.Value(thingGetter).(int)
+var (
+	reqID = privateCtxType("req-id")
+)
+
+func GetRequestID(ctx context.Context) (int, bool) {
+	id, exists := ctx.Value(reqID).(int)
+	return id, exists
 }
 
-func StoreThing(ctx context.Context, thing int) context.Context {
-	return ctx.WithValue(thing)
+func WithRequestID(ctx context.Context, reqid int) context.Context {
+	return context.WithValue(ctx, reqID, reqid)
 }
