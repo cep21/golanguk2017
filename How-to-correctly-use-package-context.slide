@@ -1,6 +1,6 @@
 How to correctly use package context
 Advice and pitfalls
-9 Aug 2017
+17 Aug 2017
 
 Jack Lindamood
 Software Engineer, Twitch
@@ -15,7 +15,9 @@ cep221@gmail.com
 - Most backend at Twitch powered by Go
 - Hundred(s) of repositories
 
-* Sections
+.link https://medium.com/@cep21/how-to-correctly-use-context-context-in-go-1-7-8f2c0fafdf39 How to correctly use context.Context in Go 1.7
+
+* Talk Sections
 - Why context exists
 - Request cancellation
 - Request scoped values
@@ -112,8 +114,8 @@ cep221@gmail.com
 - Any function that can block or take a long time to finish should have a context.Context
 
 * How to create a context
-- Use context.Background() at the beginning of an RPC request
-- If you don't have a context, and need to call a context function, use context.TODO()
+- Use `context.Background()` at the beginning of an RPC request
+- If you don't have a context, and need to call a context function, use `context.TODO()`
 - Give sub requests their own sub context if they need other timeouts
 
 .image images/context_tree.png
@@ -127,25 +129,26 @@ cep221@gmail.com
 
     func (r *Request) WithContext(ctx context.Context) *Request
 
-- The variable name should probably be ctx
+- The variable name should probably be `ctx`
 
 * Where to put a context
-- Think of a context flowing thru your program, like water in a river
+- Think of a context flowing through your program, like water in a river
 - Ideally, context exists only on the call stack
 - Do not store the context in a struct
-- Only exception is when the struct is a *request* struct (http.Request)
+- Only exception is when the struct is a *request* struct (`http.Request`)
 - Request structs should end with a request
-- context.Context variables should be unreferenced when the RPC call is finished
+- Context instances should be unreferenced when the RPC call is finished
 - Context dies when the request dies
 
 
 * Context package caveats
 - Create pattern of closing contexts
 - Especially timeout contexts
+- If a context GCs, and isn't canceled, you probably did something wrong
 
     ctx, cancel := context.WithTimeout(parentCtx, time.Second)
     // Uses time.AfterFunc
-    // Will *not* garbage collect entirely
+    // Will not garbage collect before timer expires
     defer cancel()
     // Good pattern to defer cancel() after creation
 
@@ -167,7 +170,7 @@ cep221@gmail.com
 
 .code code/doeg1.go
 
-- Execute a function in parallel
+- Execute a function concurrently
 
 * Example usage (golang.org/x/sync/errgroup)
 
@@ -179,13 +182,13 @@ cep221@gmail.com
 
 .code code/doeg3.go
 
-- Cancel the returned context sync.Once
+- Cancel the returned context once with `sync.Once`
 
 * Example usage (golang.org/x/sync/errgroup)
 
 .code code/doegwait.go
 
-- Notice cleanup cancel() after Wait
+- Notice cleanup `cancel()` after Wait
 
 * Example usage (errgroup)
 
@@ -196,7 +199,7 @@ cep221@gmail.com
 * Request scoped values
 
 * context.Value, the API duct tape
-- Allows attaching values to a context and getting them back later
+- Creates `Value` nodes in the context chain
 
 .code code/ctxvalue.go
 
@@ -229,7 +232,7 @@ cep221@gmail.com
 - Global logger
 - But what if you put the user ID on the logger?
 
-* What the problem with context.Value?
+* What's the problem with context.Value?
 - Unfortunately, almost everything is derived from the request
 - Why bother having function parameters.
 - Just accept a context?
@@ -254,7 +257,7 @@ cep221@gmail.com
     func IsAdminUser(ctx context.Context, userID string, authenticator auth.Service) bool
 
 - What does this function signature tell us?
-- This function can timeout
+- This function can end early
 - This function takes a user ID
 - This function uses an authenticator on the userID
 - What do I need to change to test this function?
@@ -269,7 +272,7 @@ cep221@gmail.com
 * So what is ok to put in context.Value?
 - context.Value should inform, not control
 - Should never be required input for documented results
-- If your function can't behave correctly because of what context.Value has, you're obscuring your API too heavily
+- If your function can't behave correctly because of what `context.Value` has, you're obscuring your API too heavily
 
 * What things usually don't control
 - Request ID
@@ -291,14 +294,38 @@ cep221@gmail.com
 - Very important to how a function works
 - Call it out explicitly
 
+* Creative debugging with context.Value
+- net/http/httptrace
+.link https://medium.com/@cep21/go-1-7-httptrace-and-context-debug-patterns-608ae887224a Go 1.7 httptrace and context debug patterns
+
+.code code/httptrace.go
+
+: https://medium.com/@cep21/go-1-7-httptrace-and-context-debug-patterns-608ae887224a
+
+* How net/http uses httptrace
+
+- If a trace is attached, execute trace callbacks
+- Inform, not control
+
+.code code/httptrace2.go
+
+* Dodgy dependency injections (github.com/golang/oauth2)
+
+- They use `ctx.Value` to locate dependencies
+- Recommend not doing this
+
+.code code/oauth.go
+
 * Reasons people abuse context.Value
 - Middleware abstractions
 - Deep callstacks
 - Spaghetti designs
 - context.Value doesn't make your API cleaner, it makes it more obscured
 
+
 * Summary of context.Value
 - Great for debugging information
 - Required context.Value parts obscure your API
 - Just try not to use it
+- Be explicit if possible
 
