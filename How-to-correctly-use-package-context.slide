@@ -133,7 +133,7 @@ cep221@gmail.com
 
 * Where to put a context
 - Think of a context flowing through your program, like water in a river
-- Ideally, context exists only on the call stack
+- Ideally, context lives with the call stack
 - Do not store the context in a struct
 - Only exception is when the struct is a *request* struct (`http.Request`)
 - Request structs should end with a request
@@ -163,6 +163,10 @@ cep221@gmail.com
 * Example usage (golang.org/x/sync/errgroup)
 
 .code code/makeeg.go
+
+: Make two requests concurrently
+: Time out each at 1 sec
+: If either fails or 5XX, end the other early
 
 - Return a context that *Group* can cancel early
 
@@ -198,20 +202,24 @@ cep221@gmail.com
 
 * Request scoped values
 
-* context.Value, the API duct tape
+* context.Value: the API duct tape
 - Creates `Value` nodes in the context chain
 
 .code code/ctxvalue.go
+
+: Duct tape fixes everything
 
 * Scope your keyspace
 
 - Private type
 - Instance of private type
-- Get/Set that uses private instance
+- Get/With that uses private instance
+- `WithXYZ` over `SetXYZ`
 
 .code code/ctxstore1.go
 
 : Be wary of vendor directory issues
+: Rec WithXYZ over SetXYZ
 
 * Context.Value should be immutable
 - context.Context is designed immutable
@@ -322,10 +330,19 @@ cep221@gmail.com
 - Spaghetti designs
 - context.Value doesn't make your API cleaner, it makes it more obscured
 
+: Singletons also make your API smaller
 
 * Summary of context.Value
 - Great for debugging information
 - Required context.Value parts obscure your API
-- Just try not to use it
 - Be explicit if possible
+- Just try not to use it
 
+* Summary of Context
+- All long/blocking operations should take a `Context`
+- errgroup is a great abstraction on top of `Context`
+- Cancel `Context` when done
+- `Context.Value` should inform, not control
+- Scope `Context.Value` keys
+- `Context` (and `Value`) should be immutable and thread safe
+- Context dies with the request

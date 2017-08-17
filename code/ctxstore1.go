@@ -1,5 +1,3 @@
-package reqinfo
-
 type privateCtxType string
 
 var (

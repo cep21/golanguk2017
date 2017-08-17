@@ -1,6 +1,6 @@
 package main
 
-func trace() {
+func trace(req *http.Request, c *http.Client) {
 	trace := &httptrace.ClientTrace{
 		GotConn: func(connInfo httptrace.GotConnInfo) {
 			fmt.Println("Got Conn")
